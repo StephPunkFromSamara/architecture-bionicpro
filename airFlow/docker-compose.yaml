@@ -1,0 +1,228 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: 'wZ0nYyJtb0JtGzqJf0mceo05XadMbHQ5y4tBSkuqBTs='
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__WEBSERVER__SECRET_KEY: '3WzVgE95D3mVnEoW7RpDxxkzu7QHczgQ59DEzAGyC80='
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./sql:/opt/airflow/sql
+    - ./requirements.txt:/opt/airflow/requirements.txt
+    - ./data:/opt/airflow/sample_files
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - dag_sample
+
+services:
+  # 🟡 Служебная БД Airflow
+  postgres:
+    image: postgres:16
+    container_name: postgres_airflow
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - dag_sample
+
+  # 🟢 CRM DB
+  postgres-crm:
+    image: postgres:16
+    container_name: postgres_crm
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: crm_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./sql/init_crm_db.sql:/docker-entrypoint-initdb.d/01_init_crm_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d crm_db"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    networks:
+      - dag_sample
+
+  # 🔵 Metric DB
+  postgres-metric:
+    image: postgres:16
+    container_name: postgres_metric
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: metric_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./sql/init_metric_db.sql:/docker-entrypoint-initdb.d/01_init_metric_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d metric_db"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    networks:
+      - dag_sample
+
+  # 🟢 CRM DB Init (гарантирует создание таблиц при каждом запуске)
+  postgres-crm-init:
+    image: postgres:16
+    container_name: postgres_crm_init
+    depends_on:
+      postgres-crm:
+        condition: service_healthy
+    volumes:
+      - ./sql/init_crm_db.sql:/init_crm_db.sql
+    environment:
+      PGHOST: postgres-crm
+      PGPORT: 5432
+      PGDATABASE: crm_db
+      PGUSER: airflow
+      PGPASSWORD: airflow
+    command:
+      - bash
+      - -c
+      - |
+        echo "Waiting for CRM DB to be ready..."
+        until pg_isready -h postgres-crm -U airflow -d crm_db; do
+          sleep 1
+        done
+        echo "Executing CRM DB initialization script..."
+        psql -h postgres-crm -U airflow -d crm_db -f /init_crm_db.sql
+        echo "CRM DB initialization completed!"
+    networks:
+      - dag_sample
+
+  # 🔵 Metric DB Init (гарантирует создание таблиц при каждом запуске)
+  postgres-metric-init:
+    image: postgres:16
+    container_name: postgres_metric_init
+    depends_on:
+      postgres-metric:
+        condition: service_healthy
+    volumes:
+      - ./sql/init_metric_db.sql:/init_metric_db.sql
+    environment:
+      PGHOST: postgres-metric
+      PGPORT: 5432
+      PGDATABASE: metric_db
+      PGUSER: airflow
+      PGPASSWORD: airflow
+    command:
+      - bash
+      - -c
+      - |
+        echo "Waiting for Metric DB to be ready..."
+        until pg_isready -h postgres-metric -U airflow -d metric_db; do
+          sleep 1
+        done
+        echo "Executing Metric DB initialization script..."
+        psql -h postgres-metric -U airflow -d metric_db -f /init_metric_db.sql
+        echo "Metric DB initialization completed!"
+    networks:
+      - dag_sample
+
+  # ⚫ ClickHouse
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_USER: airflow
+      CLICKHOUSE_PASSWORD: airflow
+      CLICKHOUSE_DB: default
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
+    networks:
+      - dag_sample
+
+  # 🟣 Airflow Init
+  airflow-init:
+    <<: *airflow-common
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - bash
+      - -c
+      - |
+        airflow db migrate && \
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@sample.ru
+    networks:
+      - dag_sample
+
+  # 🟣 Airflow Webserver
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - dag_sample
+    restart: always
+
+  # 🟣 Airflow Scheduler
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-webserver:
+        condition: service_healthy
+    networks:
+      - dag_sample
+    restart: always
+
+  # 🟣 Airflow Triggerer
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - dag_sample
+    restart: always
+
+networks:
+  dag_sample:
