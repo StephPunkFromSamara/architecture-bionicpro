@@ -1,7 +1,7 @@
 {
   "realm": "reports-realm",
   "enabled": true,
-  "sslRequired": "external",
+  "sslRequired": "none",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
@@ -15,7 +15,6 @@
       { "name": "prothetic_user", "description": "Prothetic user role with report access" }
     ]
   },
-
   "users": [
     {
       "username": "user1",
@@ -72,7 +71,6 @@
       "realmRoles": ["prothetic_user"]
     }
   ],
-
   "clients": [
     {
       "clientId": "reports-frontend",
@@ -90,10 +88,28 @@
         "oauth2.device.authorization.grant.enabled": "false",
         "post.logout.redirect.uris": "http://localhost:3000/*"
       },
-      "redirectUris": ["http://localhost:3000/*"],
-      "webOrigins": ["*"],
+      "redirectUris": ["http://localhost:3000/*", "http://localhost:3000"],
+      "webOrigins": ["http://localhost:3000", "*"],
       "defaultClientScopes": ["web-origins", "roles", "profile", "email", "openid"],
-      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.model.property": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+        }
+      ]
     },
     {
       "clientId": "reports-api",
@@ -105,7 +121,6 @@
       "secret": "oNwoLQdvJAvRcL89SydqCWCe5ry1jMgq"
     }
   ],
-
   "clientScopes": [
     {
       "name": "profile",

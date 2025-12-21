@@ -49,6 +49,9 @@ services:
       KC_DB_URL: jdbc:postgresql://keycloak_db:5432/keycloak_db
       KC_DB_USERNAME: keycloak_user
       KC_DB_PASSWORD: keycloak_password
+      KC_IMPORT: /opt/keycloak/data/import/realm-export.json
+      KC_IMPORT_OVERWRITE: "true"
+      KC_HTTP_ENABLED: "true"
     command: 
       - start-dev
       - --import-realm

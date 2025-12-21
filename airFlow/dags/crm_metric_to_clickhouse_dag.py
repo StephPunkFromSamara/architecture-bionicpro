@@ -28,7 +28,7 @@ def create_clickhouse_table():
         CREATE TABLE IF NOT EXISTS user_metrics_report (
             user_id UInt32,
             name String,
-            age UInt8,
+            email String,
             prosthesis_id String,
             usage_hours Float32,
             temperature Float32
@@ -55,8 +55,8 @@ def extract_and_merge_data():
         port=5432,
     )
 
-    crm_df = pd.read_sql("SELECT user_id, name, age FROM crm.customers;", crm_conn)
-    metric_df = pd.read_sql("SELECT user_id, prosthesis_id, usage_hours, temperature FROM metrics.device_metrics;", metric_conn)
+    crm_df = pd.read_sql("SELECT user_id, name, email FROM customers;", crm_conn)
+    metric_df = pd.read_sql("SELECT user_id, prosthesis_id, usage_hours, temperature FROM user_metrics;", metric_conn)
 
     merged_df = pd.merge(crm_df, metric_df, on="user_id", how="inner")
 
@@ -65,8 +65,8 @@ def extract_and_merge_data():
         for _, row in merged_df.iterrows():
             q = (
                 f"INSERT INTO user_metrics_report "
-                f"(user_id, name, age, prosthesis_id, usage_hours, temperature) "
-                f"VALUES ({row['user_id']}, '{row['name']}', {row['age']}, "
+                f"(user_id, name, email, prosthesis_id, usage_hours, temperature) "
+                f"VALUES ({row['user_id']}, '{row['name']}', '{row['email']}', "
                 f"'{row['prosthesis_id']}', {row['usage_hours']}, {row['temperature']});"
             )
             f.write(q + "\n")
