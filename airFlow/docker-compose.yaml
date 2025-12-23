@@ -1,10 +1,10 @@
 x-airflow-common: &airflow-common
   build:
-    context: ./airFlow
+    context: .
     dockerfile: Dockerfile
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CORE__FERNET_KEY: 'wZ0nYyJtb0JtGzqJf0mceo05XadMbHQ5y4tBSkuqBTs='
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
@@ -12,100 +12,20 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__SECRET_KEY: '3WzVgE95D3mVnEoW7RpDxxkzu7QHczgQ59DEzAGyC80='
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
   volumes:
-    - ./airFlow/dags:/opt/airflow/dags
-    - ./airFlow/sql:/opt/airflow/sql
-    - ./airFlow/requirements.txt:/opt/airflow/requirements.txt
-    - ./airFlow/data:/opt/airflow/sample_files
+    - ./dags:/opt/airflow/dags
+    - ./sql:/opt/airflow/sql
+    - ./requirements.txt:/opt/airflow/requirements.txt
+    - ./data:/opt/airflow/sample_files
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
-    postgres-airflow:
+    postgres:
       condition: service_healthy
   networks:
-    - app_network
+    - dag_sample
 
 services:
-  # ========== Keycloak Services ==========
-  keycloak_db:
-    image: postgres:14
-    container_name: keycloak_db
-    environment:
-      POSTGRES_DB: keycloak_db
-      POSTGRES_USER: keycloak_user
-      POSTGRES_PASSWORD: keycloak_password
-    volumes:
-      - ./postgres-keycloak-data:/var/lib/postgresql/data
-    ports:
-      - "5435:5432"  # Изменен порт из-за конфликта с postgres-crm
-    networks:
-      - app_network
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:21.1
-    container_name: keycloak
-    environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: c
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak_db:5432/keycloak_db
-      KC_DB_USERNAME: keycloak_user
-      KC_DB_PASSWORD: keycloak_password
-      KC_IMPORT: /opt/keycloak/data/import/realm-export.json
-      KC_IMPORT_OVERWRITE: "true"
-      KC_HTTP_ENABLED: "true"
-    command: 
-      - start-dev
-      - --import-realm
-    volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
-    ports:
-      - "8081:8080"  # Изменен порт из-за конфликта с airflow-webserver
-    depends_on:
-      - keycloak_db
-    networks:
-      - app_network
-
-  # ========== Backend API ==========
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: backend_api
-    ports:
-      - "8000:8000"
-    environment:
-      KEYCLOAK_URL: http://keycloak:8080
-      KEYCLOAK_REALM: reports-realm
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: 8123
-      CLICKHOUSE_USER: airflow
-      CLICKHOUSE_PASSWORD: airflow
-    depends_on:
-      - keycloak
-      - clickhouse
-    networks:
-      - app_network
-
-  # ========== Frontend ==========
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: frontend_app
-    ports:
-      - "3000:3000"
-    environment:
-      REACT_APP_API_URL: http://localhost:8000
-      REACT_APP_KEYCLOAK_URL: http://localhost:8081  # Обновлен порт Keycloak
-      REACT_APP_KEYCLOAK_REALM: reports-realm
-      REACT_APP_KEYCLOAK_CLIENT_ID: reports-frontend
-    depends_on:
-      - backend
-    networks:
-      - app_network
-
-  # ========== Airflow Services ==========
   # 🟡 Служебная БД Airflow
-  postgres-airflow:
+  postgres:
     image: postgres:16
     container_name: postgres_airflow
     environment:
@@ -121,7 +41,7 @@ services:
       start_period: 5s
     restart: always
     networks:
-      - app_network
+      - dag_sample
 
   # 🟢 CRM DB
   postgres-crm:
@@ -134,14 +54,14 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./airFlow/sql/init_crm_db.sql:/docker-entrypoint-initdb.d/01_init_crm_db.sql
+      - ./sql/init_crm_db.sql:/docker-entrypoint-initdb.d/01_init_crm_db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U airflow -d crm_db"]
       interval: 10s
       retries: 5
       start_period: 5s
     networks:
-      - app_network
+      - dag_sample
 
   # 🔵 Metric DB
   postgres-metric:
@@ -154,14 +74,14 @@ services:
     ports:
       - "5434:5432"
     volumes:
-      - ./airFlow/sql/init_metric_db.sql:/docker-entrypoint-initdb.d/01_init_metric_db.sql
+      - ./sql/init_metric_db.sql:/docker-entrypoint-initdb.d/01_init_metric_db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U airflow -d metric_db"]
       interval: 10s
       retries: 5
       start_period: 5s
     networks:
-      - app_network
+      - dag_sample
 
   # 🟢 CRM DB Init (гарантирует создание таблиц при каждом запуске)
   postgres-crm-init:
@@ -171,7 +91,7 @@ services:
       postgres-crm:
         condition: service_healthy
     volumes:
-      - ./airFlow/sql/init_crm_db.sql:/init_crm_db.sql
+      - ./sql/init_crm_db.sql:/init_crm_db.sql
     environment:
       PGHOST: postgres-crm
       PGPORT: 5432
@@ -190,7 +110,7 @@ services:
         psql -h postgres-crm -U airflow -d crm_db -f /init_crm_db.sql
         echo "CRM DB initialization completed!"
     networks:
-      - app_network
+      - dag_sample
 
   # 🔵 Metric DB Init (гарантирует создание таблиц при каждом запуске)
   postgres-metric-init:
@@ -200,7 +120,7 @@ services:
       postgres-metric:
         condition: service_healthy
     volumes:
-      - ./airFlow/sql/init_metric_db.sql:/init_metric_db.sql
+      - ./sql/init_metric_db.sql:/init_metric_db.sql
     environment:
       PGHOST: postgres-metric
       PGPORT: 5432
@@ -219,7 +139,7 @@ services:
         psql -h postgres-metric -U airflow -d metric_db -f /init_metric_db.sql
         echo "Metric DB initialization completed!"
     networks:
-      - app_network
+      - dag_sample
 
   # ⚫ ClickHouse
   clickhouse:
@@ -233,38 +153,15 @@ services:
       - "8123:8123"
       - "9000:9000"
     volumes:
-      - ./airFlow/sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
+      - ./sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
     networks:
-      - app_network
-
-  # ⚫ ClickHouse Init
-  clickhouse-init:
-    image: clickhouse/clickhouse-server:24.8
-    container_name: clickhouse_init
-    depends_on:
-      clickhouse:
-        condition: service_started
-    volumes:
-      - ./airFlow/sql/init_clickhouse.sql:/init_clickhouse.sql
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        echo "Waiting for ClickHouse to be ready..."
-        until clickhouse-client --host clickhouse --user airflow --password airflow --query "SELECT 1" > /dev/null 2>&1; do
-          sleep 1
-        done
-        echo "Executing ClickHouse initialization script..."
-        clickhouse-client --host clickhouse --user airflow --password airflow --multiquery < /init_clickhouse.sql
-        echo "ClickHouse initialization completed!"
-    networks:
-      - app_network
+      - dag_sample
 
   # 🟣 Airflow Init
   airflow-init:
     <<: *airflow-common
-    container_name: airflow_init
     depends_on:
-      postgres-airflow:
+      postgres:
         condition: service_healthy
     command:
       - bash
@@ -279,17 +176,16 @@ services:
           --role Admin \
           --email admin@sample.ru
     networks:
-      - app_network
+      - dag_sample
 
   # 🟣 Airflow Webserver
   airflow-webserver:
     <<: *airflow-common
-    container_name: airflow_webserver
     command: webserver
     ports:
       - "8080:8080"
     depends_on:
-      postgres-airflow:
+      postgres:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
@@ -299,37 +195,34 @@ services:
       timeout: 10s
       retries: 3
     networks:
-      - app_network
+      - dag_sample
     restart: always
 
   # 🟣 Airflow Scheduler
   airflow-scheduler:
     <<: *airflow-common
-    container_name: airflow_scheduler
     command: scheduler
     depends_on:
-      postgres-airflow:
+      postgres:
         condition: service_healthy
       airflow-webserver:
         condition: service_healthy
     networks:
-      - app_network
+      - dag_sample
     restart: always
 
   # 🟣 Airflow Triggerer
   airflow-triggerer:
     <<: *airflow-common
-    container_name: airflow_triggerer
     command: triggerer
     depends_on:
-      postgres-airflow:
+      postgres:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
     networks:
-      - app_network
+      - dag_sample
     restart: always
 
 networks:
-  app_network:
-    driver: bridge
+  dag_sample:
